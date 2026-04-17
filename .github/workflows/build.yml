@@ -1,0 +1,47 @@
+name: Build K20Pro ath9k Kernel
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+    - name: Setup
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential flex libelf-dev libssl-dev cpio python3 lld llvm clang gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+    - name: Clone kernel
+      run: |
+        cd $HOME
+        git clone --depth=1 https://github.com/SOVIET-ANDROID/kernel_xiaomi_raphael.git -b 16.0 kernel
+    - name: Build
+      run: |
+        cd $HOME/kernel
+        export ARCH=arm64
+        export SUBARCH=arm64
+        make O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 raphael_defconfig
+        echo "CONFIG_MAC80211=m" >> out/.config
+        echo "CONFIG_MAC80211_HAS_RC=y" >> out/.config
+        echo "CONFIG_MAC80211_RC_MINSTREL=y" >> out/.config
+        echo "CONFIG_MAC80211_RC_DEFAULT_MINSTREL=y" >> out/.config
+        echo "CONFIG_WLAN_VENDOR_ATH=y" >> out/.config
+        echo "CONFIG_ATH_COMMON=m" >> out/.config
+        echo "CONFIG_ATH9K_HW=m" >> out/.config
+        echo "CONFIG_ATH9K_COMMON=m" >> out/.config
+        echo "CONFIG_ATH9K_HTC=m" >> out/.config
+        echo "CONFIG_ATH9K_BTCOEX_SUPPORT=y" >> out/.config
+        make O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 olddefconfig
+        make -j$(nproc) O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 Image.gz-dtb modules 2>&1 | tail -80
+    - name: Collect
+      run: |
+        mkdir -p $HOME/out_files/modules
+        cp $HOME/kernel/out/arch/arm64/boot/Image.gz-dtb $HOME/out_files/ 2>/dev/null || true
+        cp $HOME/kernel/out/arch/arm64/boot/Image.gz $HOME/out_files/ 2>/dev/null || true
+        find $HOME/kernel/out -name "*.ko" -exec cp {} $HOME/out_files/modules/ \;
+        ls -la $HOME/out_files/
+        ls -la $HOME/out_files/modules/ 2>/dev/null
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: K20Pro-ath9k-kernel
+        path: ~/out_files/
