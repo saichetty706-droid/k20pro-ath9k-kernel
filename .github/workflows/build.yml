@@ -9,44 +9,50 @@ jobs:
     - name: Setup
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc bison build-essential flex libelf-dev libssl-dev cpio python3 lld llvm clang gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+        sudo apt-get install -y bc bison build-essential flex libelf-dev libssl-dev cpio python3 lld llvm clang gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi wget
     - name: Clone kernel
       run: |
-        git clone --depth=1 https://github.com/SOVIET-ANDROID/kernel_xiaomi_raphael.git -b 16.0 $GITHUB_WORKSPACE/kernel
-    - name: Build
+        cd $HOME
+        git clone --depth=1 https://github.com/SOVIET-ANDROID/kernel_xiaomi_raphael.git -b 16.0 kernel
+    - name: Download firmware
       run: |
-        cd $GITHUB_WORKSPACE/kernel
+        mkdir -p $HOME/firmware/ath9k_htc/
+        wget -O $HOME/firmware/ath9k_htc/htc_9271-1.4.0.fw https://github.com/endlessm/linux-firmware/raw/master/ath9k_htc/htc_9271-1.4.0.fw
+        ls -la $HOME/firmware/ath9k_htc/
+    - name: Configure and Build
+      run: |
+        cd $HOME/kernel
         export ARCH=arm64
         export SUBARCH=arm64
         make O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 raphael_defconfig
-        cat out/.config | grep -i "MAC80211\|ATH9K" || true
-        scripts/config --file out/.config -e CONFIG_MAC80211
-        scripts/config --file out/.config -e CONFIG_MAC80211_HAS_RC
-        scripts/config --file out/.config -e CONFIG_MAC80211_RC_MINSTREL
-        scripts/config --file out/.config -e CONFIG_MAC80211_RC_DEFAULT_MINSTREL
-        scripts/config --file out/.config -e CONFIG_MAC80211_LEDS
-        scripts/config --file out/.config -e CONFIG_WLAN_VENDOR_ATH
-        scripts/config --file out/.config -e CONFIG_ATH_COMMON
-        scripts/config --file out/.config -m CONFIG_ATH9K_HW
-        scripts/config --file out/.config -m CONFIG_ATH9K_COMMON
-        scripts/config --file out/.config -m CONFIG_ATH9K_HTC
-        scripts/config --file out/.config -e CONFIG_ATH9K_BTCOEX_SUPPORT
+        echo "CONFIG_CFG80211=y" >> out/.config
+        echo "CONFIG_MAC80211=y" >> out/.config
+        echo "CONFIG_MAC80211_HAS_RC=y" >> out/.config
+        echo "CONFIG_MAC80211_RC_MINSTREL=y" >> out/.config
+        echo "CONFIG_MAC80211_RC_DEFAULT_MINSTREL=y" >> out/.config
+        echo 'CONFIG_MAC80211_RC_DEFAULT="minstrel_ht"' >> out/.config
+        echo "CONFIG_WLAN_VENDOR_ATH=y" >> out/.config
+        echo "CONFIG_ATH_COMMON=y" >> out/.config
+        echo "CONFIG_ATH9K_HW=y" >> out/.config
+        echo "CONFIG_ATH9K_COMMON=y" >> out/.config
+        echo "CONFIG_ATH9K_HTC=y" >> out/.config
+        echo "CONFIG_ATH9K_BTCOEX_SUPPORT=y" >> out/.config
+        echo "CONFIG_FW_LOADER=y" >> out/.config
+        echo 'CONFIG_EXTRA_FIRMWARE="ath9k_htc/htc_9271-1.4.0.fw"' >> out/.config
+        echo 'CONFIG_EXTRA_FIRMWARE_DIR="/home/runner/firmware"' >> out/.config
         make O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 olddefconfig
-        cat out/.config | grep -i "MAC80211\|ATH9K"
-        echo "=== Starting build ==="
-        make -j$(nproc) O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 Image.gz-dtb 2>&1 | tail -100
-        make -j$(nproc) O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 modules 2>&1 | tail -50
+        echo "=== Config Check ==="
+        grep -i "ATH9K\|MAC80211\|EXTRA_FIRMWARE\|CFG80211" out/.config
+        echo "=== Building ==="
+        make -j$(nproc) O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 Image.gz-dtb
     - name: Collect
       run: |
-        mkdir -p $GITHUB_WORKSPACE/output/modules
-        find $GITHUB_WORKSPACE/kernel/out -name "Image.gz-dtb" -exec cp {} $GITHUB_WORKSPACE/output/ \;
-        find $GITHUB_WORKSPACE/kernel/out -name "Image.gz" -exec cp {} $GITHUB_WORKSPACE/output/ \;
-        find $GITHUB_WORKSPACE/kernel/out -name "*.ko" -exec cp {} $GITHUB_WORKSPACE/output/modules/ \;
-        echo "=== Output files ==="
-        ls -la $GITHUB_WORKSPACE/output/
-        ls -la $GITHUB_WORKSPACE/output/modules/ 2>/dev/null || echo "No modules found"
+        mkdir -p $HOME/out_files
+        cp $HOME/kernel/out/arch/arm64/boot/Image.gz-dtb $HOME/out_files/ 2>/dev/null || true
+        cp $HOME/kernel/out/arch/arm64/boot/Image.gz $HOME/out_files/ 2>/dev/null || true
+        ls -la $HOME/out_files/
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
         name: K20Pro-ath9k-kernel
-        path: ${{ github.workspace }}/output/
+        path: /home/runner/out_files/
