@@ -1,0 +1,1 @@
+# k20pro-ath9k-kernel
