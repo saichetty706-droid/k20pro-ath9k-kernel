@@ -1,0 +1,115 @@
+name: Build K20Pro ath9k Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+    - name: Setup build environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32ncurses5-dev lib32readline-dev lib32z1-dev libelf-dev liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 cpio
+
+    - name: Download Clang toolchain
+      run: |
+        mkdir -p ~/toolchains
+        cd ~/toolchains
+        git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+
+    - name: Clone SOVIET-STAR kernel source
+      run: |
+        cd $HOME
+        git clone --depth=1 https://github.com/SOVIET-ANDROID/kernel_xiaomi_raphael.git -b 16.0 kernel_source
+
+    - name: Configure kernel with ath9k support
+      run: |
+        cd $HOME/kernel_source
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export PATH="$HOME/toolchains/clang/bin:$PATH"
+        
+        # Use default defconfig
+        make O=out CC=clang ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- vendor/raphael_defconfig || make O=out CC=clang ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- raphael_defconfig
+        
+        # Enable ath9k and mac80211 modules
+        echo "" >> out/.config
+        echo "CONFIG_MAC80211=m" >> out/.config
+        echo "CONFIG_MAC80211_LEDS=y" >> out/.config
+        echo "CONFIG_MAC80211_HAS_RC=y" >> out/.config
+        echo "CONFIG_MAC80211_RC_MINSTREL=y" >> out/.config
+        echo "CONFIG_MAC80211_RC_DEFAULT_MINSTREL=y" >> out/.config
+        echo "CONFIG_MAC80211_RC_DEFAULT=\"minstrel_ht\"" >> out/.config
+        echo "CONFIG_ATH_COMMON=m" >> out/.config
+        echo "CONFIG_WLAN_VENDOR_ATH=y" >> out/.config
+        echo "CONFIG_ATH9K_HW=m" >> out/.config
+        echo "CONFIG_ATH9K_COMMON=m" >> out/.config
+        echo "CONFIG_ATH9K_HTC=m" >> out/.config
+        echo "CONFIG_ATH9K_HTC_DEBUGFS=y" >> out/.config
+        echo "CONFIG_ATH9K_BTCOEX_SUPPORT=y" >> out/.config
+        echo "# CONFIG_MODULE_SIG is not set" >> out/.config
+        echo "CONFIG_MODULES=y" >> out/.config
+        echo "CONFIG_MODULE_UNLOAD=y" >> out/.config
+        
+        make O=out CC=clang ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
+
+    - name: Build kernel and modules
+      run: |
+        cd $HOME/kernel_source
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export PATH="$HOME/toolchains/clang/bin:$PATH"
+        
+        make -j$(nproc) O=out CC=clang ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image.gz-dtb modules 2>&1 | tail -100
+
+    - name: Collect output files
+      run: |
+        mkdir -p $HOME/output/modules
+        cd $HOME/kernel_source
+        
+        # Copy kernel image
+        cp out/arch/arm64/boot/Image.gz-dtb $HOME/output/ 2>/dev/null || true
+        cp out/arch/arm64/boot/Image.gz $HOME/output/ 2>/dev/null || true
+        cp out/arch/arm64/boot/Image $HOME/output/ 2>/dev/null || true
+        
+        # Copy all .ko modules
+        find out/ -name "*.ko" -exec cp {} $HOME/output/modules/ \;
+        
+        # List collected files
+        echo "=== Kernel Image ==="
+        ls -la $HOME/output/Image* 2>/dev/null
+        echo "=== Modules ==="
+        ls -la $HOME/output/modules/
+
+    - name: Create AnyKernel3 flashable zip
+      run: |
+        cd $HOME
+        git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
+        cd AnyKernel3
+        
+        # Configure for raphael
+        sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+        sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot|block=auto|g' anykernel.sh
+        sed -i 's/is_slot_device=0/is_slot_device=auto/g' anykernel.sh
+        
+        # Copy kernel image
+        cp $HOME/output/Image.gz-dtb . 2>/dev/null || cp $HOME/output/Image.gz . 2>/dev/null || cp $HOME/output/Image . 2>/dev/null
+        
+        # Copy modules
+        mkdir -p modules/system/lib/modules
+        cp $HOME/output/modules/*.ko modules/system/lib/modules/ 2>/dev/null || true
+        
+        # Create zip
+        zip -r9 $HOME/output/K20Pro-ath9k-nethunter-kernel.zip * -x .git/\*
+
+    - name: Upload kernel artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: K20Pro-ath9k-kernel
+        path: |
+          ~/output/K20Pro-ath9k-nethunter-kernel.zip
+          ~/output/modules/
+          ~/output/Image*
